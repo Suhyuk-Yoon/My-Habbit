@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>한자혼용 변환기 v0.6.4</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;color-scheme:light dark}
+body{max-width:920px;margin:auto;padding:22px;line-height:1.6}
+textarea,input,select,button{font:inherit}
+textarea{width:100%;box-sizing:border-box;min-height:160px;padding:12px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
+.box{border:1px solid #888;border-radius:10px;padding:12px;min-height:80px;white-space:pre-wrap}
+.grid{display:grid;gap:18px}@media(min-width:760px){.grid{grid-template-columns:1fr 1fr}}
+input[type=password],input[type=url]{min-width:280px;padding:8px}
+button,select{padding:8px 11px}
+.small{font-size:.9rem;opacity:.85}
+.log{border-top:1px solid #8885;padding:8px 0}
+fieldset{border:1px solid #888;border-radius:10px}
+
+footer{
+  margin-top:32px;
+  padding-top:18px;
+  border-top:1px solid #8888;
+}
+footer p{margin:.5em 0}
+.contact-button{
+  display:inline-block;
+  margin-top:8px;
+  padding:9px 12px;
+  border:1px solid #888;
+  border-radius:9px;
+  text-decoration:none;
+  font-weight:600;
+}
+
+</style>
+</head>
+<body>
+<h1>한자혼용 변환기 <small>v0.6.4 Contact Footer</small></h1>
+<p>GitHub Pages에서 실행하고, 국립국어원 온용어 요청은 Cloudflare Worker가 중계합니다.</p>
+
+<fieldset>
+<legend>연결 설정</legend>
+<div class="row">
+<label>Worker 주소
+<input id="proxy" type="url" placeholder="https://xxxx.xxxx.workers.dev/"></label>
+<button id="saveProxy">Worker 주소 저장</button>
+<button id="testProxy">Worker 연결 테스트</button>
+</div>
+<div class="row">
+<label>온용어 API 키
+<input id="key" type="password" autocomplete="off" placeholder="발급받은 인증 키"></label>
+<button id="saveKey">키 저장</button>
+<button id="forgetKey">키 삭제</button>
+</div>
+<label><input id="online" type="checkbox" checked> 모르는 단어는 온용어에서 조회</label>
+<p class="small">Worker 주소와 API 키는 이 브라우저의 localStorage에만 저장됩니다.</p>
+<p class="small">v0.6.4: 어절 내부의 임의 사전 일치를 금지해 ‘강한→江漢’, ‘일어나고→日語나고’ 같은 오변환을 차단합니다.</p>
+<button id="resetCache">학습 캐시 초기화</button> <span id="cacheStatus"></span>
+</fieldset>
+
+<p><label><strong>원문</strong></label></p>
+<textarea id="input" placeholder="정부는 새로운 경제 정책을 발표하고 국제 금융 시장의 변화를 분석하였다."></textarea>
+
+<div class="row">
+<label>강도
+<select id="strength">
+<option value="1">1 — 약하게</option>
+<option value="2" selected>2 — 일반 혼용</option>
+<option value="3">3 — 옛 신문 풀파워</option>
+</select></label>
+<button id="convert">변환</button>
+<button id="clear">초기화</button>
+</div>
+
+<p id="notice" role="status" aria-live="polite"></p>
+
+<div class="grid">
+<section><h2>변환 당시 원본</h2><div id="original" class="box"></div><button id="copyOriginal">원본 복사</button></section>
+<section><h2>변환문</h2><div id="converted" class="box"></div><button id="copyConverted">변환문 복사</button></section>
+</div>
+
+<details><summary>판별/조회 기록</summary><div id="logs"></div></details>
+
+
+<footer aria-label="개발자 연락처">
+  <p><strong>개발 중인 프로젝트입니다.</strong></p>
+  <p>
+    아직 미완성이라 고쳐야 할 군더더기가 매우 많습니다.
+    개선사항이나 신규 기능 추가 등 건의할 사항이 있다면 아래 전자우편으로 연락 바랍니다.
+  </p>
+  <p>
+    E-mail:
+    <a href="mailto:yoonhrap@gmail.com?subject=%ED%95%9C%EC%9E%90%ED%98%BC%EC%9A%A9%20%EB%B3%80%ED%99%98%EA%B8%B0%20%EA%B1%B4%EC%9D%98">
+      yoonhrap@gmail.com
+    </a>
+  </p>
+  <p>
+    <a class="contact-button"
+       href="mailto:yoonhrap@gmail.com?subject=%ED%95%9C%EC%9E%90%ED%98%BC%EC%9A%A9%20%EB%B3%80%ED%99%98%EA%B8%B0%20%EA%B1%B4%EC%9D%98&body=%EA%B1%B4%EC%9D%98%20%EB%82%B4%EC%9A%A9%3A%0A%0A">
+      개선사항 제안하기
+    </a>
+  </p>
+</footer>
+
+<script>
+const SEED={
+"정부":[{hanja:"政府",definition:"나라의 행정을 맡아보는 국가 기관",source:"내장"}],
+"경제":[{hanja:"經濟",definition:"재화와 용역의 생산 분배 소비와 관련된 활동",source:"내장"}],
+"정책":[{hanja:"政策",definition:"정치적 목적을 실현하기 위한 방침",source:"내장"}],
+"발표":[{hanja:"發表",definition:"어떤 사실이나 결과를 널리 알림",source:"내장"}],
+"교육":[{hanja:"敎育",definition:"지식과 기능을 가르치고 인격을 기름",source:"내장"}],
+"학생":[{hanja:"學生",definition:"학교에서 공부하는 사람",source:"내장"}],
+"학습":[{hanja:"學習",definition:"배워서 익힘",source:"내장"}],
+"환경":[{hanja:"環境",definition:"사람이나 생물을 둘러싼 주위 조건",source:"내장"}],
+"개선":[{hanja:"改善",definition:"고쳐서 더 좋게 함",source:"내장"}],
+"국제":[{hanja:"國際",definition:"나라와 나라 사이",source:"내장"}],
+"금융":[{hanja:"金融",definition:"자금과 돈의 융통",source:"내장"}],
+"시장":[{hanja:"市場",definition:"상품과 서비스가 거래되는 곳이나 영역",source:"내장"}],
+"변화":[{hanja:"變化",definition:"상태나 성질이 달라짐",source:"내장"}],
+"분석":[{hanja:"分析",definition:"대상을 나누어 자세히 살핌",source:"내장"}],
+"연구":[{hanja:"硏究",definition:"깊이 조사하고 탐구함",source:"내장"}],
+"기사":[
+ {hanja:"記事",definition:"신문 잡지 방송 인터넷 등에 실린 보도 글 뉴스",source:"내장"},
+ {hanja:"騎士",definition:"말을 타고 싸우는 중세의 무사 갑옷 왕국",source:"내장"},
+ {hanja:"技士",definition:"기술 자격을 갖춘 기술자 엔지니어",source:"내장"}]
+,"야당":[{hanja:"野黨",definition:"정권을 담당하고 있지 않은 정당. 여당에 상대하여 이르는 말",source:"내장 검증어"}]
+,"강력":[{hanja:"强力",definition:"힘이나 영향이 강함",source:"내장 검증어"}]
+,"반발":[{hanja:"反撥",definition:"어떤 상태나 행동에 맞서서 반대함",source:"내장 검증어"}]
+,"야기":[{hanja:"惹起",definition:"일이나 사건 따위를 끌어 일으킴",source:"내장 검증어"}]
+
+};
+
+const $=s=>document.querySelector(s);
+let CACHE={},snapshot={original:"",converted:""};
+
+function load(){
+  try{CACHE=JSON.parse(localStorage.getItem("hanjaMixerCache")||"{}")}catch{CACHE={}}
+  $("#key").value=localStorage.getItem("stdictKey")||"";
+  $("#proxy").value=localStorage.getItem("hanjaProxy")||"";
+  status();
+}
+function status(){
+  $("#cacheStatus").textContent=`내장 ${Object.keys(SEED).length}개 · 인터넷 캐시 ${Object.keys(CACHE).length}개 표제어`;
+}
+function getCandidates(w){
+  const merged=[...(CACHE[w]||[]),...(SEED[w]||[])];
+  const out=[],seen=new Set();
+  for(const c of merged){
+    const k=(c.hanja||"")+"|"+(c.definition||"");
+    if(!seen.has(k)){seen.add(k);out.push(c)}
+  }
+  return out;
+}
+
+function toks(s){
+  return new Set(String(s||"").match(/[가-힣]{2,}/g)||[]);
+}
+
+function bigrams(s){
+  const clean=String(s||"").replace(/[^가-힣]/g,"");
+  const set=new Set();
+  for(let i=0;i<clean.length-1;i++) set.add(clean.slice(i,i+2));
+  return set;
+}
+
+function semanticScore(c,ctx){
+  const def=String(c.definition||"");
+  const source=String(c.source||"");
+  const d=toks(def+" "+source), x=toks(ctx);
+  let score=0;
+
+  // Exact Korean-token overlap is strongest.
+  for(const t of x) if(d.has(t)) score+=8;
+
+  // Character-bigram overlap catches inflected/related forms.
+  const db=bigrams(def), xb=bigrams(ctx);
+  let bi=0;
+  for(const g of xb) if(db.has(g)) bi++;
+  score+=Math.min(bi,12)*1.2;
+
+  // Prefer candidates whose definition contains contextually common domain clues.
+  const domainClues=[
+    ["정치","정당","정부","국회","법안","여당","야당"],
+    ["신문","보도","기사","언론","뉴스","방송"],
+    ["기술","자격","기사","엔지니어","산업"],
+    ["중세","무사","말","갑옷","왕국"],
+    ["전기","전류","전압","전자","물리"],
+    ["책","일생","인물","기록","전기"],
+    ["수도","도시","정부","국가"],
+    ["물","상수도","배관","수도"]
+  ];
+  for(const group of domainClues){
+    const ctxHit=group.some(k=>ctx.includes(k));
+    if(!ctxHit) continue;
+    const defHits=group.filter(k=>def.includes(k)).length;
+    score+=defHits*4;
+  }
+
+  // Trusted built-in regression terms get a small tie-break bonus, not a hard override.
+  if(source.includes("내장 검증어")) score+=2.5;
+
+  return score;
+}
+
+function choose(w,ctx){
+  const a=getCandidates(w);
+  if(!a.length) return null;
+  const ranked=a.map(x=>({c:x,score:semanticScore(x,ctx)}))
+                .sort((a,b)=>b.score-a.score);
+  return {
+    ...ranked[0].c,
+    _score:ranked[0].score,
+    _margin:ranked.length>1 ? ranked[0].score-ranked[1].score : 99,
+    _alternatives:ranked.slice(1,4).map(r=>({hanja:r.c.hanja,score:r.score}))
+  };
+}
+function cleanWord(w){return String(w||"").replace(/[-^·\d]+$/g,"").trim()}
+function hanjaOnly(s){return (String(s||"").match(/[\u3400-\u9fff]+/g)||[]).join("")}
+
+function normalizeItems(j,w){
+  const ch=j?.channel||{};
+  let ro=ch.return_object||[];
+  if(!Array.isArray(ro)) ro=[ro];
+
+  const out=[];
+  for(const group of ro){
+    let list=group?.resultlist||[];
+    if(!Array.isArray(list)) list=[list];
+
+    for(const it of list){
+      if(!it) continue;
+      const word=String(it.word||"").replace(/\^/g,"").trim();
+      if(word!==w) continue;
+
+      const origin=hanjaOnly(it.origin||"");
+      if(!origin) continue;
+
+      out.push({
+        hanja:origin,
+        definition:it.definition||"",
+        pos:"",
+        source:it.source||it.glossary||"국립국어원 온용어"
+      });
+    }
+  }
+
+  const uniq=[],seen=new Set();
+  for(const x of out){
+    const k=x.hanja+"|"+x.definition;
+    if(!seen.has(k)){seen.add(k);uniq.push(x)}
+  }
+  return uniq;
+}
+
+function normalizeProxy(raw){
+  let p=String(raw||"").trim();
+  if(!p) throw new Error("Worker 주소가 없습니다.");
+  if(!/^https?:\/\//i.test(p)) p="https://"+p;
+  return p.replace(/\/+$/,"");
+}
+
+function buildLookupURL(proxy,key,w){
+  const params=[
+    ["key",key],
+    ["apiSearchWord",w],
+    ["start","1"],
+    ["num","100"],
+    ["sort","wt"]
+  ];
+  return proxy+"/?"+params.map(([k,v])=>
+    encodeURIComponent(k)+"="+encodeURIComponent(String(v))
+  ).join("&");
+}
+
+async function termLookup(w){
+  const key=$("#key").value.trim();
+  if(!key) throw new Error("온용어 API 키가 없습니다.");
+
+  const proxy=normalizeProxy($("#proxy").value);
+  const requestURL=buildLookupURL(proxy,key,w);
+
+  let r;
+  try{
+    r=await fetch(requestURL,{method:"GET"});
+  }catch(e){
+    throw new Error("Worker 요청 실패: "+e.message);
+  }
+
+  if(!r.ok) throw new Error("Proxy HTTP "+r.status);
+
+  const raw=await r.text();
+  let j;
+  try{
+    j=JSON.parse(raw);
+  }catch{
+    throw new Error("온용어 응답이 JSON이 아닙니다: "+raw.replace(/\s+/g," ").slice(0,120));
+  }
+
+  const ro=j?.channel?.return_object;
+  const groups=Array.isArray(ro)?ro:(ro?[ro]:[]);
+  for(const g of groups){
+    const code=String(g?.returnCode??"");
+    if(code && code!=="1"){
+      throw new Error(g?.message||("온용어 API 오류 코드 "+code));
+    }
+  }
+
+  return normalizeItems(j,w);
+}
+
+const PARTICLES=[
+  "으로부터","에게서","께서는","에서는","으로써","으로서","에게는","한테서",
+  "까지는","부터는","에게","한테","께서","에서","으로","로서","로써",
+  "하고","보다","처럼","만큼","조차","마저","부터","까지",
+  "이란","이나","나","이라도","이라든지","은","는","이","가","을","를","의","에","와","과","도","만","로","께"
+];
+
+// 하다 활용형 -> 사전에서 찾을 명사성 어근.
+// 핵심: "강한"을 "강"+"한"으로 보지 않고, "강하다"의 활용 가능성을 먼저 검사한다.
+const HADA_FORMS=[
+  ["하였습니다","하였습니다"],["했습니다","했습니다"],["하였다","하였다"],["했다","했다"],
+  ["하였고","하였고"],["했고","했고"],["하였으며","하였으며"],["했으며","했으며"],
+  ["하면서","하면서"],["하며","하며"],["하고","하고"],["하는","하는"],["하여","하여"],
+  ["해서","해서"],["하니","하니"],["하면","하면"],["합니다","합니다"],["한다","한다"],["하다","하다"]
+];
+
+const DOEDA_FORMS=[
+  "되었습니다","됐습니다","되었다","됐다","되었고","됐고","되었으며","됐으며",
+  "되면서","되며","되고","되는","된","되어","돼서","되니","되면","됩니다","된다","되다"
+];
+
+// '-한'은 가장 위험하다. 명사+하다 활용(강하다→강한, 중요하다→중요한)일 수도 있고
+// 독립 명사/고유어일 수도 있으므로, 원형 후보가 사전에 실제 존재할 때만 사용한다.
+const ATTRIBUTIVE_HAN = "한";
+
+const NATIVE_BLOCK_PREFIXES=[
+  "일어나","일어났","일어난","돌아가","돌아오","알아보","알아내","바라보",
+  "내려가","내려오","올라가","올라오","넘어가","넘어오","다가가","다가오",
+  "깨어나","태어나"
+];
+
+function uniqueCandidates(arr){
+  const seen=new Set(),out=[];
+  for(const x of arr){
+    const k=x.lookup+"|"+x.start+"|"+x.end+"|"+(x.kind||"");
+    if((x.lookup||"").length>=2 && !seen.has(k)){seen.add(k);out.push(x)}
+  }
+  return out;
+}
+
+function morphologyCandidatesForRun(run,base){
+  const out=[];
+  const blocked=NATIVE_BLOCK_PREFIXES.some(x=>run.startsWith(x));
+
+  // Whole eojeol candidate.
+  if(run.length>=2){
+    out.push({lookup:run,surface:run,start:base,end:base+run.length,kind:"whole",suffix:""});
+  }
+
+  // Noun + particle.
+  for(const particle of PARTICLES){
+    if(run.endsWith(particle) && run.length-particle.length>=2){
+      const stem=run.slice(0,-particle.length);
+      out.push({
+        lookup:stem,surface:stem,start:base,end:base+stem.length,
+        kind:"particle",suffix:particle
+      });
+    }
+  }
+
+  if(!blocked){
+    // Transparent 하다 forms: 야기하였다 -> lookup "야기", replace only "야기".
+    for(const [ending] of HADA_FORMS){
+      if(run.endsWith(ending) && run.length-ending.length>=2){
+        const stem=run.slice(0,-ending.length);
+        out.push({
+          lookup:stem,surface:stem,start:base,end:base+stem.length,
+          kind:"hada",suffix:ending
+        });
+      }
+    }
+
+    // 되다 forms.
+    for(const ending of DOEDA_FORMS){
+      if(run.endsWith(ending) && run.length-ending.length>=2){
+        const stem=run.slice(0,-ending.length);
+        out.push({
+          lookup:stem,surface:stem,start:base,end:base+stem.length,
+          kind:"doeda",suffix:ending
+        });
+      }
+    }
+
+    // Lemma restoration for 관형형 '-한':
+    // 강한 -> hypothetical lemma 강하다, but dictionary lookup is performed
+    // on the Sino-Korean stem "강". It is accepted only with strict safeguards
+    // in candidate validation below.
+    if(run.endsWith(ATTRIBUTIVE_HAN) && run.length>ATTRIBUTIVE_HAN.length){
+      const stem=run.slice(0,-1);
+      if(stem.length>=1){
+        out.push({
+          lookup:stem,surface:stem,start:base,end:base+stem.length,
+          kind:"hada-han",suffix:"한",lemma:stem+"하다"
+        });
+      }
+    }
+  }
+
+  // v0.6.4: recursively peel stacked particles (e.g. 분야에서보다 -> 분야).
+  const firstPass=[...out];
+  for(const c of firstPass){
+    if(c.kind!=="particle") continue;
+    const stem=c.lookup||c.word||"";
+    for(const p of PARTICLES){
+      if(stem.endsWith(p) && stem.length-p.length>=2){
+        const root=stem.slice(0,-p.length);
+        out.push({
+          lookup:root, word:root, surface:root,
+          start:base, end:base+root.length,
+          kind:"particle", suffix:p+(c.suffix||"")
+        });
+      }
+    }
+  }
+
+  return uniqueCandidates(out);
+}
+
+function possibleWords(text){
+  const arr=[];
+  for(const m of text.matchAll(/[가-힣]+/g)){
+    arr.push(...morphologyCandidatesForRun(m[0],m.index));
+  }
+  const rank={"hada-han":0,particle:1,hada:1,doeda:1,whole:2};
+  return uniqueCandidates(arr).sort((a,b)=>
+    (rank[a.kind]??9)-(rank[b.kind]??9) ||
+    b.lookup.length-a.lookup.length || a.start-b.start
+  );
+}
+async function ensureDictionary(text,log){
+  if(!$("#online").checked) return;
+  const seen=new Set();
+  let calls=0; // diagnostic count only; no fixed cutoff
+  for(const m of possibleWords(text)){
+    const w=m.lookup;
+    if(w.length<2 || seen.has(w)||getCandidates(w).length) continue;
+    seen.add(w);
+    /* v0.6.4: fixed request cap removed; sequential lookup continues through all unique candidates. */
+    calls++;
+    try{
+      const a=await termLookup(w);
+      if(a.length){
+        CACHE[w]=a;
+        log.push(`인터넷 학습[${m.kind}]: ${w} → ${a.map(x=>x.hanja).join(", ")}`);
+      }
+    }catch(e){
+      log.push(`온라인 조회 중단: ${e.message}`);
+      break;
+    }
+  }
+  localStorage.setItem("hanjaMixerCache",JSON.stringify(CACHE));
+  status();
+}
+
+const SAFE_HADA_HAN={
+  "강한":{word:"강",hanja:"強",definition:"힘이나 정도가 세다",source:"활용 복원"},
+  "약한":{word:"약",hanja:"弱",definition:"힘이나 정도가 약하다",source:"활용 복원"},
+  "중요한":{word:"중요",hanja:"重要",definition:"중요하다",source:"활용 복원"},
+  "명확한":{word:"명확",hanja:"明確",definition:"명확하다",source:"활용 복원"},
+  "복잡한":{word:"복잡",hanja:"複雜",definition:"복잡하다",source:"활용 복원"},
+  "간단한":{word:"간단",hanja:"簡單",definition:"간단하다",source:"활용 복원"},
+  "필요한":{word:"필요",hanja:"必要",definition:"필요하다",source:"활용 복원"},
+  "가능한":{word:"가능",hanja:"可能",definition:"가능하다",source:"활용 복원"},
+  "다양한":{word:"다양",hanja:"多樣",definition:"다양하다",source:"활용 복원"}
+};
+
+function findMatches(text){
+  const dictSet=new Set([...Object.keys(CACHE),...Object.keys(SEED)]);
+  const candidates=[];
+
+  for(const m of possibleWords(text)){
+    // Exact safe restoration has priority and never interprets "강한" as 江漢.
+    if(m.kind==="whole" && SAFE_HADA_HAN[m.surface]){
+      const x=SAFE_HADA_HAN[m.surface];
+      candidates.push({
+        word:x.word,start:m.start,end:m.end-1,kind:"safe-hada-han",
+        forced:x
+      });
+      continue;
+    }
+
+    // Never accept the whole surface "강한" etc. if it is recognized as a
+    // safe 하다 inflection. This is the v0.6.4 false-homograph guard.
+    if(m.kind==="whole" && SAFE_HADA_HAN[m.surface]) continue;
+
+    if(m.lookup.length>=2 && dictSet.has(m.lookup)){
+      candidates.push({
+        word:m.lookup,start:m.start,end:m.end,kind:m.kind
+      });
+    }
+  }
+
+  const priority={"safe-hada-han":0,particle:1,hada:1,doeda:1,whole:2};
+  candidates.sort((a,b)=>
+    a.start-b.start ||
+    (priority[a.kind]??9)-(priority[b.kind]??9) ||
+    (b.end-b.start)-(a.end-a.start)
+  );
+
+  const chosen=[];
+  let cursor=-1;
+  for(const c of candidates){
+    if(c.start<cursor) continue;
+    chosen.push(c);
+    cursor=c.end;
+  }
+  return chosen;
+}
+
+function localConvert(text,strength,log){
+  const reps=[];
+  for(const m of findMatches(text)){
+    const ctx=text.slice(Math.max(0,m.start-45),Math.min(text.length,m.end+45));
+    const c=m.forced ? {
+      hanja:m.forced.hanja,
+      definition:m.forced.definition,
+      source:m.forced.source,
+      _score:99,_margin:99,_alternatives:[]
+    } : choose(m.word,ctx);
+    if(!c) continue;
+
+    // Strength 1 skips low-confidence ambiguous choices.
+    if(strength===1 && c._margin<2.5){
+      log.push(`보류: ${m.word} · 문맥 판별 불확실 (점수 차 ${c._margin.toFixed(1)})`);
+      continue;
+    }
+
+    reps.push({...m,h:c.hanja});
+    const confidence=c._margin>=6?"높음":c._margin>=2.5?"보통":"낮음";
+    const alts=c._alternatives?.length
+      ? ` · 다른 후보 ${c._alternatives.map(x=>x.hanja+" "+x.score.toFixed(1)).join(", ")}`
+      : "";
+    log.push(`${m.word} → ${c.hanja} [${confidence}; ${c._score.toFixed(1)}점] (${c.source||"캐시"})${alts} · ${c.definition||""}`);
+  }
+
+  let out=text;
+  for(const r of reps.sort((a,b)=>b.start-a.start)){
+    out=out.slice(0,r.start)+r.h+out.slice(r.end);
+  }
+
+  if(strength>=3){
+    out=out.replace(/(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])/g,"");
+  }
+  return out;
+}
+
+$("#convert").onclick=async()=>{
+  const text=$("#input").value;
+  const strength=Number($("#strength").value);
+  const log=[];
+  $("#notice").textContent="사전을 확인하고 있습니다…";
+  $("#convert").disabled=true;
+  try{
+    await ensureDictionary(text,log);
+    const out=localConvert(text,strength,log);
+    snapshot={original:text,converted:out};
+    $("#original").textContent=text;
+    $("#converted").textContent=out;
+    $("#notice").textContent="변환 완료.";
+    $("#logs").innerHTML="";
+    for(const s of log){
+      const d=document.createElement("div");
+      d.className="log"; d.textContent=s;
+      $("#logs").appendChild(d);
+    }
+  }catch(e){
+    $("#notice").textContent="오류: "+e.message;
+  }finally{
+    $("#convert").disabled=false;
+  }
+};
+
+async function cp(t,label,b){
+  if(!t)return;
+  try{await navigator.clipboard.writeText(t)}
+  catch{
+    const x=document.createElement("textarea");
+    x.value=t;document.body.append(x);x.select();
+    document.execCommand("copy");x.remove();
+  }
+  const o=b.textContent;b.textContent=label+" 복사됨";
+  setTimeout(()=>b.textContent=o,1200);
+}
+
+$("#copyOriginal").onclick=e=>cp(snapshot.original,"원본",e.currentTarget);
+$("#copyConverted").onclick=e=>cp(snapshot.converted,"변환문",e.currentTarget);
+$("#saveKey").onclick=()=>{
+  localStorage.setItem("stdictKey",$("#key").value.trim());
+  $("#notice").textContent="API 키를 저장했습니다.";
+};
+$("#forgetKey").onclick=()=>{
+  localStorage.removeItem("stdictKey");$("#key").value="";
+  $("#notice").textContent="API 키를 삭제했습니다.";
+};
+$("#testProxy").onclick=async()=>{
+  $("#notice").textContent="Worker 연결을 시험하고 있습니다…";
+  try{
+    const proxy=normalizeProxy($("#proxy").value);
+    const key=$("#key").value.trim();
+    if(!key) throw new Error("온용어 API 키를 먼저 입력해 주세요.");
+
+    const u=buildLookupURL(proxy,key,"정부");
+    const r=await fetch(u,{method:"GET"});
+    const raw=await r.text();
+
+    if(!r.ok) throw new Error("HTTP "+r.status+" · "+raw.slice(0,100));
+
+    const j=JSON.parse(raw);
+    const ro=j?.channel?.return_object;
+    const groups=Array.isArray(ro)?ro:(ro?[ro]:[]);
+    const bad=groups.find(g=>String(g?.returnCode??"") && String(g.returnCode)!=="1");
+    if(bad) throw new Error(bad.message||("온용어 API 오류 코드 "+bad.returnCode));
+
+    $("#notice").textContent="Worker 연결 성공 · 온용어 JSON 응답 확인.";
+  }catch(e){
+    $("#notice").textContent="연결 테스트 실패: "+e.message;
+  }
+};
+
+$("#resetCache").onclick=()=>{
+  localStorage.removeItem("hanjaMixerCache");
+  CACHE={};
+  status();
+  $("#notice").textContent="기존 학습 캐시를 초기화했습니다. 다음 변환부터 v0.6.4 방식으로 다시 학습합니다.";
+};
+$("#saveProxy").onclick=()=>{
+  try{
+    const p=normalizeProxy($("#proxy").value);
+    $("#proxy").value=p;
+    localStorage.setItem("hanjaProxy",p);
+    $("#notice").textContent="Worker 주소를 저장했습니다.";
+  }catch(e){
+    $("#notice").textContent="Worker 주소 오류: "+e.message;
+  }
+};
+$("#clear").onclick=()=>{
+  $("#input").value="";$("#original").textContent="";$("#converted").textContent="";
+  snapshot={original:"",converted:""};
+};
+load();
+</script>
+</body>
+</html>
